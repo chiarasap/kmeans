@@ -16,6 +16,21 @@ st.set_page_config(
     layout="wide",
 )
 
+# Inizializzazione dello stato di sessione di Streamlit
+if 'kmeans_ran' not in st.session_state:
+    st.session_state.kmeans_ran = False
+if 'kmeans_results' not in st.session_state:
+    st.session_state.kmeans_results = None
+if 'df_movies_clustered' not in st.session_state:
+    st.session_state.df_movies_clustered = None
+if 'X_scaled_data' not in st.session_state:
+    st.session_state.X_scaled_data = None
+if 'selected_features_list' not in st.session_state:
+    st.session_state.selected_features_list = []
+if 'k_value_set' not in st.session_state:
+    st.session_state.k_value_set = 0
+
+
 # Titolo e introduzione
 st.title("🎬 Classificazione di Film con K-means")
 st.markdown("""
@@ -341,6 +356,11 @@ else:
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
+    # Memorizza le features selezionate e i dati scalati nello stato di sessione
+    st.session_state.X_scaled_data = X_scaled
+    st.session_state.selected_features_list = selected_features
+    st.session_state.k_value_set = k_value # Salva k_value per usi futuri
+
     # Mostra il dataset
     st.subheader("Dataset dei Film")
     st.write(df_movies[['Title', 'Genre', 'Budget (mln $)', 'Duration (min)', 'Year', 'Revenue (mln $)']].head(10))
@@ -394,6 +414,7 @@ else:
         ax_dist.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
         st.pyplot(fig_dist)
+        plt.close(fig_dist) # Chiudi la figura per liberare memoria
 
     # Contenuto informativo
     with col2:
@@ -427,6 +448,15 @@ else:
         # Istanziamo e addestriamo il modello K-means
         kmeans = KMeansClustering(k=k_value, max_iterations=max_iterations, random_state=kmeans_seed)
         kmeans.fit(X_scaled, verbose=False)
+
+        # Salviamo i risultati nello stato di sessione
+        st.session_state.kmeans_results = kmeans
+        st.session_state.kmeans_ran = True
+        
+        # Salviamo anche il DataFrame con i cluster assegnati
+        df_movies_clustered = df_movies.copy()
+        df_movies_clustered['Cluster'] = kmeans.clusters
+        st.session_state.df_movies_clustered = df_movies_clustered
 
         # Visualizziamo le iterazioni una per una
         st.subheader("Evoluzione dell'algoritmo K-means")
@@ -489,9 +519,7 @@ else:
         ax_sse.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
         st.pyplot(fig_sse)
-
-        # Salviamo i cluster nel dataframe
-        df_movies['Cluster'] = kmeans.clusters
+        plt.close(fig_sse) # Chiudi la figura
 
         # Visualizziamo il risultato finale
         st.subheader("Risultato finale del clustering")
@@ -501,8 +529,6 @@ else:
         # K-means clustering
         for j in range(kmeans.k):
             cluster_points = X_scaled[kmeans.clusters == j]
-            # cluster_indices = np.where(kmeans.clusters == j)[0] # This line is not used for plotting
-            # titles_in_cluster = df_movies.iloc[cluster_indices]['Title'].tolist() # This line is not used for plotting
             if len(cluster_points) > 0:
                 ax1.scatter(
                     cluster_points[:, x_index],
@@ -544,25 +570,11 @@ else:
 
         plt.tight_layout()
         st.pyplot(fig_final)
-
-        # Analisi dei cluster
-        st.subheader("Analisi dei Cluster")
-
-        # Tabella dei film per cluster
-        cluster_counts = df_movies['Cluster'].value_counts().sort_index()
-        st.write(f"**Distribuzione dei film nei cluster:**")
-
-        # Crea un dataframe per la distribuzione dei cluster
-        cluster_dist_df = pd.DataFrame({
-            'Cluster': [f"Cluster {i+1}" for i in range(k_value)],
-            'Numero di Film': [cluster_counts[i] if i in cluster_counts.index else 0 for i in range(k_value)]
-        })
-
-        st.write(cluster_dist_df)
+        plt.close(fig_final) # Chiudi la figura
 
         # Calcolo della matrice di confusione e metriche di valutazione
         y_true = df_movies['Genre_numeric']  # Generi reali (codificati numericamente)
-        y_pred = df_movies['Cluster']        # Cluster predetti da K-means
+        y_pred = kmeans.clusters        # Cluster predetti da K-means
 
         # Calcolo della matrice di confusione
         conf_matrix = confusion_matrix(y_true, y_pred)
@@ -600,6 +612,7 @@ else:
         plt.tight_layout()
 
         st.pyplot(fig_conf_matrix)
+        plt.close(fig_conf_matrix) # Chiudi la figura
 
         # Calcolo delle metriche di valutazione
         st.subheader("Metriche di Valutazione del Clustering")
@@ -666,57 +679,75 @@ else:
         - **Silhouette ({silhouette_avg:.3f})**: {silhouette_interpretation}
         """)
 
-        # Analisi dettagliata per cluster
+    # Se il K-means è stato eseguito, mostriamo i grafici e le analisi dettagliate
+    if st.session_state.kmeans_ran:
+        kmeans_results = st.session_state.kmeans_results
+        df_movies_clustered = st.session_state.df_movies_clustered
+        X_scaled = st.session_state.X_scaled_data
+        selected_features = st.session_state.selected_features_list
+        k_value = st.session_state.k_value_set # Usa il k_value impostato al momento dell'esecuzione
+
         st.subheader("Analisi Dettagliata per Cluster")
 
+        # Tabella dei film per cluster (ricalcolata da df_movies_clustered)
+        cluster_counts = df_movies_clustered['Cluster'].value_counts().sort_index()
+        st.write(f"**Distribuzione dei film nei cluster:**")
+        cluster_dist_df = pd.DataFrame({
+            'Cluster': [f"Cluster {i+1}" for i in range(k_value)],
+            'Numero di Film': [cluster_counts[i] if i in cluster_counts.index else 0 for i in range(k_value)]
+        })
+        st.write(cluster_dist_df)
+
+        # NOVITÀ: Grafici Istogrammi per Distribuzione dei Generi all'interno di ciascun Cluster
+        st.markdown("### Distribuzione dei Generi all'interno di ciascun Cluster")
         for cluster_id in range(k_value):
-            # Trova il genere più rappresentato in questo cluster
-            cluster_mask = df_movies['Cluster'] == cluster_id
-            cluster_genres = df_movies[cluster_mask]['Genre'].value_counts()
+            cluster_df = df_movies_clustered[df_movies_clustered['Cluster'] == cluster_id]
+            if not cluster_df.empty:
+                fig_genre_dist, ax_genre_dist = plt.subplots(figsize=(8, 5))
+                sns.countplot(y='Genre', data=cluster_df, order=genre_names, palette='viridis', ax=ax_genre_dist)
+                ax_genre_dist.set_title(f'Generi nel Cluster {cluster_id + 1} (Totale: {len(cluster_df)} film)')
+                ax_genre_dist.set_xlabel('Numero di Film')
+                ax_genre_dist.set_ylabel('Genere Reale')
+                plt.tight_layout()
+                st.pyplot(fig_genre_dist)
+                plt.close(fig_genre_dist)
+            else:
+                st.info(f"Il Cluster {cluster_id + 1} è vuoto.")
 
-            if len(cluster_genres) > 0:
-                dominant_genre = cluster_genres.index[0]
-                dominant_count = cluster_genres.iloc[0]
-                total_in_cluster = cluster_genres.sum()
-                purity = (dominant_count / total_in_cluster) * 100
+        # NOVITÀ: Heatmap delle Caratteristiche medie per Cluster
+        st.markdown("### Importanza delle Caratteristiche nei Cluster (Valori Scalati Medi)")
+        st.write("Questa heatmap mostra i valori medi delle caratteristiche (scalate) per ogni cluster. Valori più alti (blu scuro) indicano una maggiore rilevanza positiva, valori più bassi (giallo chiaro) una minore rilevanza.")
 
-                st.write(f"**Cluster {cluster_id + 1}:**")
-                st.write(f"- Genere dominante: {dominant_genre} ({dominant_count}/{total_in_cluster} film = {purity:.1f}%)")
+        centroids_scaled_df = pd.DataFrame(kmeans_results.centroids, columns=selected_features)
+        centroids_scaled_df.index = [f"Cluster {i+1}" for i in range(k_value)]
 
-                # Mostra la distribuzione dei generi in questo cluster
-                genre_dist = ", ".join([f"{genre}: {count}" for genre, count in cluster_genres.items()])
-                st.write(f"- Distribuzione generi: {genre_dist}")
+        fig_heatmap, ax_heatmap = plt.subplots(figsize=(10, 6))
+        sns.heatmap(centroids_scaled_df, annot=True, fmt=".2f", cmap="YlGnBu", linewidths=.5, ax=ax_heatmap)
+        ax_heatmap.set_title('Valori Medi Scalati delle Caratteristiche per Cluster')
+        ax_heatmap.set_xlabel('Caratteristiche')
+        ax_heatmap.set_ylabel('Cluster')
+        plt.tight_layout()
+        st.pyplot(fig_heatmap)
+        plt.close(fig_heatmap)
 
-                # Precisione del cluster (purezza)
-                if purity > 80:
-                    cluster_quality = "Cluster molto puro"
-                elif purity > 60:
-                    cluster_quality = "Cluster abbastanza puro"
-                elif purity > 40:
-                    cluster_quality = "Cluster misto"
-                else:
-                    cluster_quality = "Cluster molto misto"
-
-                st.write(f"- Qualità: {cluster_quality}")
-                st.write("---")
 
         # Matrice di confusione normalizzata
         st.subheader("Matrice di Confusione Normalizzata")
         st.write("Percentuali di distribuzione dei generi nei cluster")
 
-        # Normalizza per righe (per genere)
-        # Ensure conf_matrix_sum_axis1 has no zeros to avoid division by zero
-        conf_matrix_sum_axis1 = conf_matrix.sum(axis=1)
-        # Replace zeros with a small epsilon to avoid division by zero errors
-        conf_matrix_sum_axis1[conf_matrix_sum_axis1 == 0] = 1e-10
-        conf_matrix_norm = conf_matrix.astype('float') / conf_matrix_sum_axis1[:, np.newaxis]
+        y_true_current = df_movies_clustered['Genre_numeric']
+        y_pred_current = df_movies_clustered['Cluster']
+        conf_matrix_current = confusion_matrix(y_true_current, y_pred_current)
+
+        conf_matrix_sum_axis1 = conf_matrix_current.sum(axis=1)
+        conf_matrix_sum_axis1[conf_matrix_sum_axis1 == 0] = 1e-10 # Evita divisione per zero
+        conf_matrix_norm = conf_matrix_current.astype('float') / conf_matrix_sum_axis1[:, np.newaxis]
         conf_matrix_norm_df = pd.DataFrame(
             conf_matrix_norm,
             index=[f"{genre}" for genre in genre_names],
             columns=[f"Cluster {i+1}" for i in range(k_value)]
         )
 
-        # Heatmap normalizzata
         fig_conf_norm, ax_conf_norm = plt.subplots(figsize=(10, 8))
         sns.heatmap(
             conf_matrix_norm_df,
@@ -734,26 +765,21 @@ else:
         plt.tight_layout()
 
         st.pyplot(fig_conf_norm)
+        plt.close(fig_conf_norm) # Chiudi la figura
 
-        # Caratteristiche medie dei cluster
-        st.write("**Caratteristiche medie dei cluster:**")
+        # Caratteristiche medie dei cluster (valori originali)
+        st.write("**Caratteristiche medie dei cluster (valori originali):**")
+        cluster_means_original = df_movies_clustered.groupby('Cluster')[selected_features].mean().round(2)
+        st.write(cluster_means_original)
 
-        cluster_means = df_movies.groupby('Cluster').agg({
-            'Budget (mln $)': 'mean',
-            'Duration (min)': 'mean',
-            'Year': 'mean',
-            'Revenue (mln $)': 'mean'
-        }).round(2)
-
-        st.write(cluster_means)
 
         # Interpretazione dei cluster
         st.subheader("Interpretazione dei Cluster")
 
         # Determina il genere dominante in ogni cluster
         for cluster_id in range(k_value):
-            cluster_mask = df_movies['Cluster'] == cluster_id
-            cluster_genres = df_movies[cluster_mask]['Genre'].value_counts()
+            cluster_mask = df_movies_clustered['Cluster'] == cluster_id
+            cluster_genres = df_movies_clustered[cluster_mask]['Genre'].value_counts()
 
             if len(cluster_genres) > 0:
                 dominant_genre = cluster_genres.index[0]
@@ -763,8 +789,8 @@ else:
 
                 st.markdown(f"**Cluster {cluster_id + 1}** - Principalmente **{dominant_genre}** ({percentage:.1f}%)")
 
-                # Caratteristiche del cluster
-                cluster_stats = cluster_means.loc[cluster_id]
+                # Caratteristiche del cluster usando i valori originali per una migliore leggibilità
+                cluster_stats = cluster_means_original.loc[cluster_id]
                 st.markdown(f"""
                 - Budget medio: ${cluster_stats['Budget (mln $)']:.1f} milioni
                 - Durata media: {cluster_stats['Duration (min)']:.1f} minuti
@@ -773,32 +799,36 @@ else:
                 """)
 
                 # Film rappresentativi del cluster (fino a 5)
-                representative_films = df_movies[df_movies['Cluster'] == cluster_id].head(5)['Title'].tolist()
+                representative_films = df_movies_clustered[df_movies_clustered['Cluster'] == cluster_id].head(5)['Title'].tolist()
                 st.markdown("**Film rappresentativi:**")
                 for film in representative_films:
                     st.markdown(f"- {film}")
 
                 st.markdown("---")
+            else:
+                st.info(f"Il Cluster {cluster_id + 1} è vuoto.")
+    else:
+        st.info("Clicca su 'Esegui K-means' per visualizzare l'analisi dettagliata dei cluster, gli istogrammi e le heatmap.")
 
-        # Note finali
-        st.info("""
-        **Note sull'interpretazione**:
+# Note finali
+st.info("""
+**Note sull'interpretazione**:
 
-        - I cluster potrebbero non corrispondere esattamente ai generi perché K-means trova pattern basati solo sulle caratteristiche numeriche selezionate.
-        - Alcuni film possono essere classificati in un cluster diverso dal loro genere reale a causa di caratteristiche atipiche.
-        - L'accuratezza del clustering dipende fortemente dalle caratteristiche selezionate e dal numero di cluster impostato.
-        """)
+- I cluster potrebbero non corrispondere esattamente ai generi perché K-means trova pattern basati solo sulle caratteristiche numeriche selezionate.
+- Alcuni film possono essere classificati in un cluster diverso dal loro genere reale a causa di caratteristiche atipiche.
+- L'accuratezza del clustering dipende fortemente dalle caratteristiche selezionate e dal numero di cluster impostato.
+""")
 
-        # Footer
-        st.markdown("""
-        ---
-        ### Suggerimenti per l'utilizzo
+# Footer
+st.markdown("""
+---
+### Suggerimenti per l'utilizzo
 
-        1. **Caratteristiche**: Prova diverse combinazioni di caratteristiche per vedere come cambiano i cluster.
-        2. **Numero di cluster**: Aumenta o diminuisci K per trovare il raggruppamento più significativo.
-        3. **Dimensioni del dataset**: Un dataset più grande può rivelare pattern più chiari.
-        4. **Visualizzazioni**: Cambia le caratteristiche visualizzate per esplorare relazioni diverse nei dati.
+1. **Caratteristiche**: Prova diverse combinazioni di caratteristiche per vedere come cambiano i cluster.
+2. **Numero di cluster**: Aumenta o diminuisci K per trovare il raggruppamento più significativo.
+3. **Dimensioni del dataset**: Un dataset più grande può rivelare pattern più chiari.
+4. **Visualizzazioni**: Cambia le caratteristiche visualizzate per esplorare relazioni diverse nei dati.
 
-        Questo strumento è utile per comprendere come l'algoritmo K-means può essere applicato alla classificazione di contenuti
-        multimediali e all'analisi di mercato nel settore cinematografico.
-        """)
+Questo strumento è utile per comprendere come l'algoritmo K-means può essere applicato alla classificazione di contenuti
+multimediali e all'analisi di mercato nel settore cinematografico.
+""")
